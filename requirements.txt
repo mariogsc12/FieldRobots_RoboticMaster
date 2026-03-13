@@ -3,3 +3,4 @@ coppeliasim-zmqremoteapi-client>=2.0.4
 networkx>=3.4.2
 pandas>=2.3.3
 pyzmq>=27.1.0
+numpy>=2.4.3
