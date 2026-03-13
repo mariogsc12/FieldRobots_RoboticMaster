@@ -31,6 +31,10 @@ import networkx as nx
 import numpy as np
 import math
 from enum import Enum
+from coppeliasim_zmqremoteapi_client import RemoteAPIClient
+
+client = RemoteAPIClient()
+sim = client.getObject('sim')
 
 from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 
