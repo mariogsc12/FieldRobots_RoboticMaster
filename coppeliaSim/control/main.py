@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 import os
+import math
+import time
 
 START_POSITION = [29, 5]
 GOAL_POSITION = [59, 19]
@@ -18,8 +20,13 @@ OUTPUT_FOLDER_PATH = SIMULATION_DATA_FOLDER_PATH / "solution_path"
 GRAVITY = 9.807
 SUBDIV = 800
 CONSTANT = 10
-LINEAR_VELOCITY = 3.5
-ANGULAR_VELOCITY = 5
+Kp_LINEAR_VELOCITY = 0.01
+Kp_ANGULAR_VELOCITY = 0.0015
+
+MAXIMUM_LINEAR_VELOCITY = 3.5
+MAXIMUM_ANGULAR_VELOCITY = 0.5
+
+LOOKAHEAD_DISTANCE = 25
 
 sim = get_client()
 init_logger(sim)
@@ -65,6 +72,9 @@ class AckermanController:
             - linear_velocity in [m/s]
             - angular_velocity in [rad/s]
         """
+        linear_velocity = self.limit_velocity(linear_velocity, MAXIMUM_LINEAR_VELOCITY)
+        angular_velocity = self.limit_velocity(angular_velocity, MAXIMUM_ANGULAR_VELOCITY)
+        
         self.logger.log(f"Moving robot with twist: ({linear_velocity, angular_velocity})")
                 
         v_right = linear_velocity + self.wheel_distance * angular_velocity
@@ -79,6 +89,12 @@ class AckermanController:
         sim.setJointTargetVelocity(self.wheels['back_left'],   omega_left)
         sim.setJointTargetVelocity(self.wheels['front_right'], -omega_right)
         sim.setJointTargetVelocity(self.wheels['back_right'],  -omega_right)
+    
+    def limit_velocity(self, command: float, maximum:float):
+        if command > maximum or command < -maximum:
+            return maximum
+        else:
+            return command
         
     def stop(self):
         self.logger.log(f"Stopping robot")
@@ -228,8 +244,8 @@ class GlobalPlanner:
         self.logger.log("Graph: get start")
         reference = sim.multiplyVector(self.heightfield_to_world, self.upper_left_corner)
         start = (
-            reference[0] + START_POSITION[0],
-            reference[1] - START_POSITION[1],
+            reference[0] + self.start_position[0],
+            reference[1] - self.start_position[1],
             0,
         )
         start = sim.multiplyVector(self.world_to_heightfield, start)
@@ -240,8 +256,8 @@ class GlobalPlanner:
         self.logger.log("Graph: get goal")
         reference = sim.multiplyVector(self.heightfield_to_world, self.lower_right_corner)
         goal = (
-            reference[0] - GOAL_POSITION[0],
-            reference[1] + GOAL_POSITION[1],
+            reference[0] - self.goal_position[0],
+            reference[1] + self.goal_position[1],
             0,
         )
         goal = sim.multiplyVector(self.world_to_heightfield, goal)
@@ -264,7 +280,86 @@ class GlobalPlanner:
     @property
     def world_to_heightfield(self):
         return sim.getMatrixInverse(self.heightfield_to_world)
+
+class LocalPlanner:
+    _DEFAULT_LOOKAHEAD_DISTANCE = 3
+    logger = Logger()
     
+    def __init__(self, path_handle, lookahead_distance=_DEFAULT_LOOKAHEAD_DISTANCE):
+        self.path_handle = path_handle
+        
+        self.robot_handle = sim.getObject('/RobotnikSummitXL')
+        self.start_handle = sim.getObject('/Start')
+        self.double_table = sim.unpackDoubleTable(sim.readCustomDataBlock(path_handle,'PATH'))
+        self.robot_controller = AckermanController()
+        
+        self.threshold_distance = lookahead_distance
+        self.goal_threshold = 1
+        
+        self.position_index = 0
+        
+    def get_position_on_path(self):
+        size = len(self.double_table)
+        self.logger.log(f'Size: {size}')
+        start_index = self.position_index * 7
+        end_index = start_index + 7
+        self.logger.log(f'Start Index: {start_index}')
+        self.logger.log(f'End Index: {end_index}')
+        return self.double_table[start_index:end_index]
+       
+    def run(self):
+        # if self.position_index * 7 + 7 > len(self.double_table):
+        #     self.position_index = int(len(self.double_table) / 7 - 1)
+        # path_pos = sim.getPositionOnPath(self.path_handle, self.position_index)
+        path_pos = self.get_position_on_path()
+        sim.setObjectPosition(self.start_handle, -1, path_pos)
+        rob_pos = sim.getObjectPosition(self.robot_handle, -1)
+        m = sim.getObjectMatrix(self.robot_handle, -1)
+        m = sim.getMatrixInverse(m)
+        sim_time = sim.getSimulationTime()
+
+        path_pos = sim.multiplyVector(m, path_pos)
+        error_distance = math.sqrt(
+            path_pos[0] * path_pos[0]
+            + path_pos[1] * path_pos[1]
+            + path_pos[2] * path_pos[2]
+        )
+        error_angle = math.atan2(path_pos[0], path_pos[1]) - math.pi/2
+        
+        linear_velocity = Kp_LINEAR_VELOCITY * error_distance
+        angular_velocity = -1 * Kp_ANGULAR_VELOCITY * error_angle
+        
+        self.logger.log(f'Error Distance: {error_distance}')
+        self.logger.log(f'Error Angle: {math.degrees(error_angle)}')
+        if self.position_index * 7 + 7 == len(self.double_table) and error_distance < self.goal_threshold:
+            linear_velocity = angular_velocity = 0
+        self.robot_controller.move(linear_velocity, angular_velocity)
+
+        while error_distance < self.threshold_distance and self.position_index * 7 + 7 < len(self.double_table):
+            self.position_index += 1
+            path_pos = self.get_position_on_path()
+            sim.setObjectPosition(self.start_handle, -1, path_pos)
+            rob_pos = sim.getObjectPosition(self.robot_handle, -1)
+            m = sim.getObjectMatrix(self.robot_handle, -1)
+            m = sim.getMatrixInverse(m)
+
+            path_pos = sim.multiplyVector(m, path_pos)
+            error_distance = math.sqrt(
+                math.pow(path_pos[0], 2)
+                + math.pow(path_pos[1], 2)
+            )
+
+    def follow_path(self):
+        step = 0.1
+        path_pos = self.get_position_on_path()
+        point = path_pos[:2]
+        if self.time < step + sim.getSimulationTime():
+            sim.setObjectPosition(self.robot_handle, -1, point)
+            self.time = sim.getSimulationTime()
+            if self.index < len(self.double_table) - 7:
+                self.index += 7
+                self.position_index += 1
+                 
 def main():
     controller = AckermanController()
     controller.move(0,0)
@@ -272,7 +367,25 @@ def main():
     
     global_planner = GlobalPlanner()
     global_planner.generate_distance_path()
-    global_planner.load_path()
+    path = global_planner.load_path()
+    
+    local_planner = LocalPlanner(
+        path,
+        lookahead_distance=LOOKAHEAD_DISTANCE
+    )
+    
+    try:
+        print("Starting follow path mode with local planner... Press Ctrl+C to stop.")
+        while True:
+            # 2. Execute one step
+            local_planner.run()
+            
+    except KeyboardInterrupt:
+        print("Script stopped by user")
+    
+    finally:
+        # Stop motors
+        controller.stop()
     
 if __name__ == "__main__":
     main()
