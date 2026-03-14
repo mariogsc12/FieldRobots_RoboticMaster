@@ -1,9 +1,10 @@
 
-from coppeliaSim.utils.utils import get_client 
+from coppeliaSim.utils.utils import get_client, Logger, init_logger 
 from dataclasses import dataclass
 from enum import Enum
 
 sim = get_client()
+init_logger(sim)
 
 @dataclass
 class RobotnikProperties:
@@ -29,12 +30,16 @@ class AckermanController:
     """
     Ackerman controller for Robotnik robot
     """
+    logger = Logger()
+    
     def __init__(self, radius=RobotnikProperties.radius, wheel_distance=RobotnikProperties.wheel_distance):
         self.radius = radius
         self.wheel_distance = wheel_distance
 
         # Get all wheel handles
         self.wheels = {wheel.name: wheel.get_handle() for wheel in RobotWheels}
+        
+        self.logger.log(f"Succesfully initialized '{self.__class__.__name__}'")
 
     def move(self, linear_velocity: float, angular_velocity: float):
         """
@@ -42,6 +47,8 @@ class AckermanController:
             - linear_velocity in [m/s]
             - angular_velocity in [rad/s]
         """
+        self.logger.log(f"Moving robot with twist: ({linear_velocity, angular_velocity})")
+                
         v_right = linear_velocity + self.wheel_distance * angular_velocity
         v_left = linear_velocity - self.wheel_distance * angular_velocity
 
@@ -55,9 +62,17 @@ class AckermanController:
         sim.setJointTargetVelocity(self.wheels['front_right'], -omega_right)
         sim.setJointTargetVelocity(self.wheels['back_right'],  -omega_right)
         
+    def stop(self):
+        self.logger.log(f"Stopping robot")
+        sim.setJointTargetVelocity(self.wheels['front_left'],  0)
+        sim.setJointTargetVelocity(self.wheels['back_left'],   0)
+        sim.setJointTargetVelocity(self.wheels['front_right'], 0)
+        sim.setJointTargetVelocity(self.wheels['back_right'],  0)
+        
 def main():
     controller = AckermanController()
-    controller.move(0,0.5)
+    controller.move(0,0.25)
+    # controller.stop()
 
 if __name__ == "__main__":
     main()

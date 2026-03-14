@@ -6,15 +6,11 @@ function sysCall_init()
 end
 
 function sysCall_actuation()
-    if coroutine.status(corout)~='dead' then
-        local ok,errorMsg=coroutine.resume(corout)
-        if errorMsg then
-            error(debug.traceback(corout,errorMsg),2)
-        end
-    end
+    -- Control logic
 end
 
 function sysCall_cleanup()
+    -- Cleaning after end simulation
 end
 
 function sysCall_thread()
