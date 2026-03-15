@@ -9,7 +9,6 @@ import pandas as pd
 from pathlib import Path
 import os
 import math
-import casadi as ca
 
 sim = get_client()
 init_logger(sim)
@@ -35,9 +34,9 @@ class RobotWheels(Enum):
         except Exception as e:
             raise Exception(f"Impossible to get the handle of '{self.value}': {e}")
         
-class AckermanController:
+class DifferentialController:
     """
-    Ackerman controller for Robotnik robot
+    Differential controller
     """
     logger = Logger()
     
@@ -335,7 +334,7 @@ class LocalPlanner:
         self.threshold_distance = self.local_planner_config["lookahead_distance"]
         
         # Initialize controller
-        self.robot_controller = AckermanController(max_linear_vel=robot_config["max_linear_vel"],max_angular_vel=robot_config["max_angular_vel"])
+        self.robot_controller = DifferentialController(max_linear_vel=robot_config["max_linear_vel"],max_angular_vel=robot_config["max_angular_vel"])
         self.pose_pid_controller = PIDPoseController(kp_x=self.local_planner_config["pose_pid"]["kp_x"],
                                                 kp_y=self.local_planner_config["pose_pid"]["kp_y"], 
                                                 kp_theta=self.local_planner_config["pose_pid"]["kp_theta"])
