@@ -9,8 +9,7 @@ import pandas as pd
 from pathlib import Path
 import os
 import math
-import argparse
-import yaml
+import casadi as ca
 
 sim = get_client()
 init_logger(sim)
@@ -405,6 +404,28 @@ class LocalPlanner:
         linear_velocity, angular_velocity = self.pose_pid_controller.compute(robot_pose, target_pose)
         return linear_velocity, angular_velocity
 
+    def condition_check(self, error_distance: float) -> bool:
+        if self.position_index * 7 + 7 >= len(self.double_table) and error_distance < self.threshold_distance:
+            self.robot_controller.stop()
+            self.finished = True
+            self.logger.log("Goal reached!")
+            
+            return True
+        else:
+            return False
+        
+    def controller_manager(self, error_distance:float, error_angle:float):
+        if self.mode == ControllerType.PURE_PURSUIT:
+            linear_velocity, angular_velocity = self.pure_pusuit_controller(error_distance, error_angle)
+        elif self.mode == ControllerType.POSE_PID:
+            world_target = self.get_position_on_path()
+            linear_velocity, angular_velocity = self.pid_pose_controller(world_target)
+        else:
+            raise ValueError(f"Unknown controller type: {self.mode}")
+            
+        self.robot_controller.move(linear_velocity, angular_velocity)
+        self.record_robot_position()
+            
     def run(self):
         path_pos = self.get_position_on_path()
         m = sim.getObjectMatrix(self.robot_handle, -1)
@@ -420,23 +441,9 @@ class LocalPlanner:
         self.logger.log(f'Error: ({error_distance:.2f}, {math.degrees(error_angle):.2f})')
         
         # Goal reached condition
-        if self.position_index * 7 + 7 >= len(self.double_table) and error_distance < self.threshold_distance:
-            linear_velocity = angular_velocity = 0
-            self.robot_controller.stop()
-            self.finished = True
-            self.logger.log("Goal reached!")
-        else:
-            if self.mode == ControllerType.PURE_PURSUIT:
-                linear_velocity, angular_velocity = self.pure_pusuit_controller(error_distance, error_angle)
-            elif self.mode == ControllerType.POSE_PID:
-                world_target = self.get_position_on_path()
-                linear_velocity, angular_velocity = self.pid_pose_controller(world_target)
-            else:
-                raise ValueError(f"Unknown controller type: {self.mode}")
-                
-            self.robot_controller.move(linear_velocity, angular_velocity)
-            self.record_robot_position()
-
+        if not self.condition_check(error_distance):
+            self.controller_manager(error_distance, error_angle)
+            
         while error_distance < self.threshold_distance and self.position_index * 7 + 7 < len(self.double_table):
             self.position_index += 1
             path_pos = self.get_position_on_path()
