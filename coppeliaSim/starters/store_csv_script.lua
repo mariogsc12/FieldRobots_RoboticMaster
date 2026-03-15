@@ -1,8 +1,15 @@
 sim = require('sim')
 
-DATA_PATH = 'C:/Users/mario/OneDrive/Desktop/MASTER/SEGUNDO_CUATRI/ROBOTS_DE_CAMPO/TRABAJO/FieldRobots_RoboticMaster/simulation_data'
+DATA_PATH = 'C:/Users/mario/OneDrive/Desktop/MASTER/SEGUNDO_CUATRI/ROBOTS_DE_CAMPO/TRABAJO/FieldRobots_RoboticMaster/simulation_data/heightfield'
 
 function sysCall_init()
+    -- Stop wheels
+    local wheel_names = {'/front_left_wheel', '/front_right_wheel', '/back_left_wheel', '/back_right_wheel'}
+    for i, wname in ipairs(wheel_names) do
+        local handle = sim.getObject(wname)
+        sim.setJointTargetVelocity(handle, 0)
+    end
+    
     local win_path = string.gsub(DATA_PATH, "/", "\\")
     os.execute('if not exist "' .. win_path .. '" mkdir "' .. win_path .. '"')
     

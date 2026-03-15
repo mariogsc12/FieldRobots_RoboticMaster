@@ -18,3 +18,6 @@ def distance_3d(pos1, pos2):
         + (z1 - z2) * (z1 - z2)
     )
     return cost
+
+def normalize_angle(angle):
+    return math.atan2(math.sin(angle), math.cos(angle))

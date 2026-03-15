@@ -10,9 +10,11 @@ class Logger:
             cls._instance.sim = sim
         return cls._instance
 
-    def log(self, message: str, verbosity_level: int = 1):
+    def log(self, message: str, verbosity_level: int = 1, to_print: bool = False):
         if self.sim:
             self.sim.addLog(verbosity_level, message)
+            if to_print:
+                print(message)
         else:
             print(message) 
 
