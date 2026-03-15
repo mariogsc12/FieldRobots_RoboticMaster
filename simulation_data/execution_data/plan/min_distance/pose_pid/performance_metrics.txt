@@ -1,0 +1,1 @@
+Execution finished in: 1m 0.6s (60.58619s) with max memory usage of 125.09818 MB (0.36767%)

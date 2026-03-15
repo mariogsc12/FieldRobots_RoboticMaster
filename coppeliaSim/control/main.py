@@ -1,5 +1,5 @@
 
-from coppeliaSim.utils.utils import get_client, Logger, init_logger, get_config, parse_config, MissionData, get_terminal_args, PathType, ControllerType
+from coppeliaSim.utils.utils import get_client, Logger, init_logger, get_config, parse_config, MissionData, get_terminal_args, PathType, ControllerType, Mode, log_performance_analysis
 from coppeliaSim.utils.math import distance_2d, distance_3d, normalize_angle
 from dataclasses import dataclass
 from enum import Enum
@@ -125,11 +125,15 @@ class PIDPoseController:
     
 class GlobalPlanner:
     """ Global Planner based on the example provided in Aula Global """
+    FRICTION = 0.5
+    GRAVITY = 9.81
+    CONSTANT = 10
     
     logger = Logger()
     
-    def __init__(self, mission_data: MissionData, config:dict):
+    def __init__(self, mission_data: MissionData, config:dict, mode:Mode):
         
+        self.mode = mode
         self.config = config
         
         # Get data from config
@@ -137,20 +141,20 @@ class GlobalPlanner:
         self.goal_position = mission_data.goal
         
         self.heightfield_folder_path = Path(self.config["heightfield_folder_path"])
-        self.solution_folder_path = Path(self.config["solution_folder_path"])
+        self.executed_folder_path = Path(self.config["executed_folder_path"])
         self.subdiv = self.config["subdiv"]
         
         self.graph = nx.Graph()
         self.upper_left_corner = None
         self.lower_right_corner = None
+        self.robot_mass = sim.getShapeMass(sim.getObject('/RobotnikSummitXL'))
         
         self.logger.log("Loading data")
         self.load_data()
         
-        os.makedirs(self.solution_folder_path, exist_ok=True)
-        self.logger.log(f"Output folder check passed: {self.solution_folder_path}")
+        os.makedirs(self.executed_folder_path, exist_ok=True)
+        self.logger.log(f"Output folder check passed: {self.executed_folder_path}")
             
-
     def load_data(self):
         indexes = pd.read_csv(self.heightfield_folder_path / 'indices.csv', index_col=False, dtype=np.float64, header=None)
         vertices = pd.read_csv(self.heightfield_folder_path / 'vertices.csv', index_col=False, dtype=np.float64, header=None)
@@ -186,7 +190,44 @@ class GlobalPlanner:
         self.upper_left_corner = upper_left_corner
         self.logger.log(f"Right corner: {lower_right_corner}")
         self.logger.log(f"Left corner: {upper_left_corner}")
+    
+    def generate_direct_path(self):
+        if not self.graph.nodes:
+            self.add_nodes(self.graph)
+
+        start = [float(v) for v in self.start_position]
+        goal = [float(v) for v in self.goal_position]
+        
+        n_points = 20
+        points = []
+        points_3D = []
+        
+        for i in range(n_points + 1):
+            t = i / n_points
+            x = start[0] * (1 - t) + goal[0] * t
+            y = start[1] * (1 - t) + goal[1] * t
             
+            # Extract the closest node to start position
+            closest_node = self.get_closest_node(self.graph, (x, y))
+            
+            # Get z value of this node and add small margin
+            z = self.graph.nodes[closest_node]['pos'][2] + 0.3
+            
+            # Transform to world coordinates
+            absolute_position = sim.multiplyVector(self.heightfield_to_world, [x, y, z])
+            
+            points_3D.append(absolute_position)
+            points.extend(absolute_position)
+            
+            # Orientation (quaterniong)
+            points.extend([0.0, 0.0, 0.0, 1.0]) 
+
+        self.logger.log(f"Creating direct path with {len(points_3D)} points", to_print=True)
+        
+        # Save the solution path
+        self.save_path(points, subfolder="")
+        self.desired_path = self.draw_path(points)
+        
     def generate_distance_path(self):
         self.add_nodes(self.graph)
         self.get_corners(self.graph)
@@ -209,7 +250,7 @@ class GlobalPlanner:
         self.logger.log("Graph: Path searching with A*")
         path = nx.astar_path(self.graph, closest_to_start, closest_to_goal, heuristic=self.distance_cost)
         self.logger.log("Graph: Create path object")
-        self.distance_path = self.create_path(self.graph, path)
+        self.desired_path = self.create_path(self.graph, path, subfolder="min_distance")
         
     def generate_energy_path(self):
         self.add_nodes(self.graph)
@@ -237,9 +278,9 @@ class GlobalPlanner:
         self.logger.log("Graph: Path searching")
         path = nx.dijkstra_path(self.graph, closest_to_start, closest_to_goal)
         self.logger.log("Graph: Create path object")
-        self.energy_path = self.create_path(self.graph, path, extruded_shape=True)
+        self.desired_path = self.create_path(self.graph, path, subfolder="min_energy", extruded_shape=True)
 
-    def create_path(self, graph, path, extruded_shape=False):
+    def create_path(self, graph, path, subfolder, extruded_shape=False):
         points = []
         points_3D = []
         
@@ -261,13 +302,24 @@ class GlobalPlanner:
             shape = sim.generateShapeFromPath(points, section)
             sim.setShapeColor(shape, None, sim.colorcomponent_ambient_diffuse, color)
             
-        self.save_path(points)
-        return sim.createPath(points, 0, self.subdiv)
+        self.save_path(points,subfolder)
+        
+        return self.draw_path(points)
     
-    def save_path(self, points: list, name: str = "solution_path"):
-        filename = self.solution_folder_path / f"{name}.csv"
-        np_points = np.asarray(points)
-        np.savetxt(filename, np_points, delimiter=',')
+    def save_path(self, points: list, subfolder:str="distance", name: str = "solution_path"):
+        folder_path = Path(self.executed_folder_path) / str(self.mode) / subfolder 
+        
+        folder_path.mkdir(parents=True, exist_ok=True)
+        filename = folder_path / f"{name}.csv"
+    
+        # Get x,y,z
+        xyz_points = [points[i:i+3] for i in range(0, len(points), 7)]
+        
+        # Save with pandas
+        df = pd.DataFrame(xyz_points, columns=["x", "y", "z"])
+        df.to_csv(filename, index=False)
+        
+        self.logger.log(f"Solution path saved to {filename}", to_print=True)
 
     def distance_cost(self, node_index_1, node_index_2):
         node_1 = self.graph.nodes[node_index_1]
@@ -275,7 +327,36 @@ class GlobalPlanner:
         p1 = node_1['pos'][0], node_1['pos'][1]
         p2 = node_2['pos'][0], node_2['pos'][1]
         return distance_2d(p1, p2)
-    
+
+    def energy_cost(self, node_index_1, node_index_2):
+        """
+        We need the angle respect to the XY plane.
+        So we calculate the angle against the z-axis and then substract
+        this 90 - calculated_angle to get the angle respect to the XY plane.
+
+        The formula we use for energy is:
+        E = mg(u cos(?) + sin(?))*l
+        where:
+        - m is the mass of the robot
+        - g is the gravity
+        - ? is the of the vector respect to the XY plane
+        - l is the vector's length.
+        """
+        point_1 = self.graph.nodes[node_index_1]['pos']
+        point_2 = self.graph.nodes[node_index_2]['pos']
+        vector_1_to_2 = [
+            point_2[0] - point_1[0],
+            point_2[1] - point_1[1],
+            point_2[2] - point_1[2]
+        ]
+        vector_length = distance_3d(vector_1_to_2, [0, 0, 0])
+        angle_to_z = math.acos(vector_1_to_2[2] / vector_length)
+        angle_to_xy_plane = (math.pi/2 - angle_to_z)
+        energy = self.robot_mass * self.GRAVITY * (self.FRICTION * math.cos(angle_to_xy_plane) + self.CONSTANT * math.sin(angle_to_xy_plane)) * vector_length
+        if energy < 0:
+            energy = 0
+        return energy
+
     def get_closest_node(self, graph, position):
         nodes = list(graph.nodes)
 
@@ -293,12 +374,7 @@ class GlobalPlanner:
     def get_goal(self):
         return tuple(self.goal_position)
     
-    def load_path(self, name:str = "solution_path"):
-        self.logger.log("Loading path")
-        filename = self.solution_folder_path / f"{name}.csv"
-        points = np.genfromtxt(filename, delimiter=',')
-        points = list(points)
-        self.logger.log(len(points) / 7)
+    def draw_path(self, points):
         return sim.createPath(points, 0, self.subdiv)
 
     @property
@@ -320,7 +396,8 @@ class LocalPlanner:
                  path_handle, 
                  local_planner_config:dict,
                  robot_config:dict,
-                 mode: ControllerType):
+                 mode: Mode,
+                 controller: ControllerType):
         
         self.start_pos = mission_data.start
         self.goal_pos = mission_data.goal
@@ -329,6 +406,7 @@ class LocalPlanner:
         self.local_planner_config = local_planner_config
         self.robot_config = robot_config
         self.mode = mode
+        self.controller = controller
         
         # Get data from config
         self.threshold_distance = self.local_planner_config["lookahead_distance"]
@@ -349,6 +427,7 @@ class LocalPlanner:
         self.position_index = 0
         self.finished = False
         self.executed_path = []
+        self.executed_twist = []
         
         # Move markers and robot to defined positions
         path_pos = self.get_position_on_path()
@@ -367,7 +446,7 @@ class LocalPlanner:
             0,
             -1,
             10000,
-            self.mode.color
+            self.controller.color
         )
         
         
@@ -414,16 +493,17 @@ class LocalPlanner:
             return False
         
     def controller_manager(self, error_distance:float, error_angle:float):
-        if self.mode == ControllerType.PURE_PURSUIT:
+        if self.controller == ControllerType.PURE_PURSUIT:
             linear_velocity, angular_velocity = self.pure_pusuit_controller(error_distance, error_angle)
-        elif self.mode == ControllerType.POSE_PID:
+        elif self.controller == ControllerType.POSE_PID:
             world_target = self.get_position_on_path()
             linear_velocity, angular_velocity = self.pid_pose_controller(world_target)
         else:
-            raise ValueError(f"Unknown controller type: {self.mode}")
+            raise ValueError(f"Unknown controller type: {self.controller}")
             
         self.robot_controller.move(linear_velocity, angular_velocity)
-        self.record_robot_position()
+        self.record_robot_data(linear_velocity, angular_velocity)
+        
             
     def run(self):
         path_pos = self.get_position_on_path()
@@ -467,12 +547,13 @@ class LocalPlanner:
                 self.index += 7
                 self.position_index += 1
                 
-    def record_robot_position(self):
+    def record_robot_data(self,linear_velocity:float, angular_velocity:float):
 
         pos = sim.getObjectPosition(self.robot_handle, -1)
 
         # save
         self.executed_path.append(pos)
+        self.executed_twist.append([linear_velocity, angular_velocity])
 
         # draw in CoppeliaSim
         sim.addDrawingObjectItem(
@@ -480,8 +561,9 @@ class LocalPlanner:
             [pos[0], pos[1], pos[2]]
         )
 
-    def save_executed_path(self, folder="solutions"):
-        full_folder = os.path.join(folder, str(self.mode))
+    def save_executed_path(self, path_type: str = "", folder="solutions"):
+        path = path_type if self.mode is Mode.PLAN else ""
+        full_folder = os.path.join(folder, str(self.mode), str(path), str(self.controller))
         os.makedirs(full_folder, exist_ok=True)
         filename = os.path.join(full_folder, "executed_path.csv")
 
@@ -493,7 +575,23 @@ class LocalPlanner:
         df.to_csv(filename, index=False)
 
         self.logger.log(f"Executed path saved to {filename}", to_print=True)
-                 
+        
+    def save_executed_twist(self, path_type: str = "", folder="solutions"):
+        path = path_type if self.mode is Mode.PLAN else ""
+        
+        full_folder = os.path.join(folder, str(self.mode), str(path), str(self.controller))
+        os.makedirs(full_folder, exist_ok=True)
+        filename = os.path.join(full_folder, "executed_twist.csv")
+
+        df = pd.DataFrame(
+            self.executed_twist,
+            columns=["v", "w"]
+        )
+
+        df.to_csv(filename, index=False)
+
+        self.logger.log(f"Executed twist saved to {filename}", to_print=True)
+           
 def main():
     main_logger = Logger()
     main_logger.log("\n" * 50)
@@ -505,36 +603,63 @@ def main():
     config_data = get_config(args.config_path)
     mission_data, config_data = parse_config(config_data)
     
-    global_planner = GlobalPlanner(mission_data=mission_data, config=config_data["global_planner"])
+    path_str = args.path_type if args.mode is Mode.PLAN else ""
+    base_folder = config_data["global_planner"]["executed_folder_path"]
     
-    if args.path_type == PathType.MIN_DISTANCE:
-        global_planner.generate_distance_path()
-    elif args.path_type == PathType.MIN_ENERGY:
-        global_planner.generate_energy_path()
+    full_folder = os.path.join(base_folder, str(args.mode), str(path_str), str(args.controller))
+    metrics_file = os.path.join(full_folder, "performance_metrics.txt")
+    
+    @log_performance_analysis(
+        log_func=print, 
+        prefix="Execution finished in: ", 
+        file_path=metrics_file
+    ) 
+    def run_simulation():
+        controller = args.controller
+        global_planner = GlobalPlanner(mission_data=mission_data, config=config_data["global_planner"], mode=args.mode)
         
-    path = global_planner.load_path()
-    
-    local_planner = LocalPlanner(
-        mode = args.controller,
-        mission_data=mission_data,
-        path_handle=path,
-        local_planner_config=config_data["local_planner"],
-        robot_config=config_data["robot"]
-    )
-    
-    try:
-        print("Starting follow path mode with local planner... Press Ctrl+C to stop.")
-        while not local_planner.finished:
-            local_planner.run()
-        print("Goal reached. Stopping local planner")
-            
-    except KeyboardInterrupt:
-        main_logger.log("Script stopped by user", to_print=True)
-    
-    local_planner.save_executed_path(
-        config_data["global_planner"]["executed_folder_path"]
-    )
-    main_logger.log("Simulation succesfully finished", to_print=True)
-    
+        if args.mode == Mode.DIRECT:
+            global_planner.generate_direct_path()
+                
+        elif args.mode == Mode.PLAN:
+            if args.path_type == PathType.MIN_DISTANCE:
+                global_planner.generate_distance_path()
+            elif args.path_type == PathType.MIN_ENERGY:
+                global_planner.generate_energy_path()
+        else:
+            raise ValueError(f"Unknown mode: {args.mode}")
+        
+        local_planner = LocalPlanner(
+            mode = args.mode,
+            controller = controller,
+            mission_data=mission_data,
+            path_handle=global_planner.desired_path,
+            local_planner_config=config_data["local_planner"],
+            robot_config=config_data["robot"]
+        )
+        
+        try:
+            print("Starting follow path mode with local planner... Press Ctrl+C to stop.")
+            while not local_planner.finished:
+                local_planner.run()
+            print("Goal reached. Stopping local planner")
+                
+        except KeyboardInterrupt:
+            main_logger.log("Script stopped by user", to_print=True)
+        
+        local_planner.save_executed_path(
+            path_type=args.path_type,
+            folder=config_data["global_planner"]["executed_folder_path"]
+        )
+        
+        local_planner.save_executed_twist(
+            path_type=args.path_type,
+            folder=config_data["global_planner"]["executed_folder_path"]
+        )
+        
+        main_logger.log("Simulation succesfully finished", to_print=True)
+
+    run_simulation()
+
 if __name__ == "__main__":
     main()
