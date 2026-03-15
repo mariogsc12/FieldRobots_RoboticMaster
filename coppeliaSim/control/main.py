@@ -1,5 +1,5 @@
 
-from coppeliaSim.utils.utils import get_client, Logger, init_logger, get_config, parse_config, MissionData
+from coppeliaSim.utils.utils import get_client, Logger, init_logger, get_config, parse_config, MissionData, get_terminal_args
 from coppeliaSim.utils.math import distance_2d, distance_3d, normalize_angle
 from dataclasses import dataclass
 from enum import Enum
@@ -11,10 +11,6 @@ import os
 import math
 import argparse
 import yaml
-
-
-YAML_FILE = Path(__file__).parent.parent / "config.yaml"
-
 
 sim = get_client()
 init_logger(sim)
@@ -375,7 +371,8 @@ def main():
     main_logger.log("=================  NEW EXECUTION ==================")
     main_logger.log("===================================================")
     
-    config_data = get_config(YAML_FILE)
+    args = get_terminal_args()
+    config_data = get_config(args.config_path)
     mission_data, config_data = parse_config(config_data)
     
     global_planner = GlobalPlanner(mission_data=mission_data, config=config_data["global_planner"])

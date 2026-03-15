@@ -3,7 +3,7 @@ from typing import Any, Tuple
 from pathlib import Path
 import yaml
 from dataclasses import dataclass
-
+import argparse
 class Logger:
     _instance = None 
 
@@ -55,3 +55,23 @@ def parse_config(config: dict) -> tuple["MissionData", dict]:
     mission_data = MissionData(start=mission_dict["start_pos"],
                                goal=mission_dict["goal_pos"])
     return mission_data, config
+
+def get_terminal_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Point2point simulation with robotnik in coppeliaSim"
+    )
+    
+    parser.add_argument(
+        "--config_path",
+        type=Path,
+        default=Path(__file__).parent.parent / "config.yaml",
+        help="Path to the yaml configuration file"
+    )
+    
+    args = parser.parse_args()
+    
+    print(f"Starting python script with:" \
+          f"\n\t - config path: {args.config_path}")
+    
+    return args 
+    
