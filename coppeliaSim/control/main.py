@@ -278,7 +278,7 @@ class GlobalPlanner:
         self.logger.log("Graph: Path searching")
         path = nx.dijkstra_path(self.graph, closest_to_start, closest_to_goal)
         self.logger.log("Graph: Create path object")
-        self.desired_path = self.create_path(self.graph, path, subfolder="min_energy", extruded_shape=True)
+        self.desired_path = self.create_path(self.graph, path, subfolder="min_energy")
 
     def create_path(self, graph, path, subfolder, extruded_shape=False):
         points = []
@@ -290,17 +290,28 @@ class GlobalPlanner:
             points.extend(absolute_position)
             points.extend((0, 0, 0, 1))
             points_3D.append(absolute_position)
+            
+        goal_x = self.goal_position[0]
+        goal_y = self.goal_position[1]
+        
+        # Get the z value of the last node
+        last_node_index = path[-1]
+        goal_z = graph.nodes[last_node_index]['pos'][2]
+        
+        exact_goal_relative = [float(goal_x), float(goal_y), float(goal_z)]
+        exact_goal_absolute = sim.multiplyVector(self.heightfield_to_world, exact_goal_relative)
+        
+        # Add goal to the solution
+        points.extend(exact_goal_absolute)
+        points.extend((0, 0, 0, 1)) 
+        points_3D.append(exact_goal_absolute)
+        
         prev_point = points_3D[0]
         distance = 0
         for next_point in points_3D:
             distance += distance_3d(prev_point, next_point)
             prev_point = next_point
         self.logger.log(f'Total distance: {distance}')
-        if extruded_shape:
-            section=[-0.1, 0, 0.1, 0]
-            color=[255, 0, 0]
-            shape = sim.generateShapeFromPath(points, section)
-            sim.setShapeColor(shape, None, sim.colorcomponent_ambient_diffuse, color)
             
         self.save_path(points,subfolder)
         
@@ -436,7 +447,7 @@ class LocalPlanner:
         sim.setObjectPosition(self.robot_handle, -1, start_robot_pos)
         sim.setObjectPosition(self.start_handle, -1, start_pos)
 
-        goal_pos = [self.goal_pos[0], self.goal_pos[1], path_pos[2] +  + 0.5]  
+        goal_pos = [self.goal_pos[0], self.goal_pos[1], path_pos[2] + 0.5]  
         sim.setObjectPosition(self.goal_handle, -1, goal_pos)
         
         # Robot trajectory path
