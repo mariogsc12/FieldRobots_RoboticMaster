@@ -5,12 +5,20 @@ mission:
 global_planner:
   heightfield_folder_path: 'C:/Users/mario/OneDrive/Desktop/MASTER/SEGUNDO_CUATRI/ROBOTS_DE_CAMPO/TRABAJO/FieldRobots_RoboticMaster/simulation_data/heightfield' 
   solution_folder_path: 'C:/Users/mario/OneDrive/Desktop/MASTER/SEGUNDO_CUATRI/ROBOTS_DE_CAMPO/TRABAJO/FieldRobots_RoboticMaster/simulation_data/solution_path'
+  executed_folder_path: 'C:/Users/mario/OneDrive/Desktop/MASTER/SEGUNDO_CUATRI/ROBOTS_DE_CAMPO/TRABAJO/FieldRobots_RoboticMaster/simulation_data/executed_path'
   subdiv: 800
 
 local_planner:
-  kp_linear: 0.5
-  kp_angular: 0.3
   lookahead_distance: 1
+
+  pure_pursuit:
+    kp_linear: 0.5
+    kp_angular: 0.3
+
+  pose_pid:
+    kp_x: 0.5
+    kp_y: 0.5
+    kp_theta: 0.3
 
 robot:
   max_linear_vel: 1.5

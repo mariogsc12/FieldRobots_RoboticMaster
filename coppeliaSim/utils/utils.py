@@ -4,6 +4,8 @@ from pathlib import Path
 import yaml
 from dataclasses import dataclass
 import argparse
+from enum import Enum
+
 class Logger:
     _instance = None 
 
@@ -49,6 +51,27 @@ class MissionData:
     start: list
     goal: list
     
+class PathType(Enum):
+    MIN_ENERGY = 'min_energy'
+    MIN_DISTANCE = 'min_distance'
+    COMBINED = 'combined'
+    
+    def __str__(self):
+        return self.value
+    
+class ControllerType(Enum):
+    PURE_PURSUIT = 'pure_pursuit'
+    POSE_PID = 'pose_pid'
+    
+    def __str__(self):
+        return self.value
+
+    @property
+    def color(self):
+        if self == ControllerType.PURE_PURSUIT:
+            return [1,0,0]
+        elif self == ControllerType.POSE_PID:
+            return [0,0,1]
     
 def parse_config(config: dict) -> tuple["MissionData", dict]:
     mission_dict = config.pop("mission")  
@@ -67,11 +90,32 @@ def get_terminal_args() -> argparse.Namespace:
         default=Path(__file__).parent.parent / "config.yaml",
         help="Path to the yaml configuration file"
     )
+
+    parser.add_argument(
+        "--path_type",
+        type=str,
+        choices=[e.value for e in PathType],
+        default=PathType.MIN_DISTANCE,
+        help="Method used to compute the solution path"
+    )
+
+    parser.add_argument(
+        "--controller",
+        type=str,
+        choices=[e.value for e in ControllerType],
+        default=ControllerType.PURE_PURSUIT,
+        help="Controller used to follow the path"
+    )
     
     args = parser.parse_args()
     
     print(f"Starting python script with:" \
-          f"\n\t - config path: {args.config_path}")
+          f"\n\t - config path: {args.config_path}" \
+          f"\n\t - path type:   {args.path_type}" \
+          f"\n\t - controller:  {args.controller}" 
+    )
     
+    args.path_type = PathType(args.path_type)
+    args.controller = ControllerType(args.controller)
     return args 
     

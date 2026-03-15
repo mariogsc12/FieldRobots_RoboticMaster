@@ -1,5 +1,5 @@
 
-from coppeliaSim.utils.utils import get_client, Logger, init_logger, get_config, parse_config, MissionData, get_terminal_args
+from coppeliaSim.utils.utils import get_client, Logger, init_logger, get_config, parse_config, MissionData, get_terminal_args, PathType, ControllerType
 from coppeliaSim.utils.math import distance_2d, distance_3d, normalize_angle
 from dataclasses import dataclass
 from enum import Enum
@@ -98,6 +98,33 @@ class AckermanController:
         sim.setJointTargetVelocity(self.wheels['front_right'], 0)
         sim.setJointTargetVelocity(self.wheels['back_right'],  0)
 
+class PIDPoseController:
+    
+    def __init__(self, kp_x, kp_y, kp_theta):
+        self.kp_x = kp_x
+        self.kp_y = kp_y
+        self.kp_theta = kp_theta
+
+    def compute(self, robot_pose, target_pose):
+
+        xr, yr, thetar = robot_pose
+        xt, yt = target_pose
+
+        dx = xt - xr
+        dy = yt - yr
+
+        # Transform to robot frame
+        error_x = math.cos(thetar) * dx + math.sin(thetar) * dy
+        error_y = -math.sin(thetar) * dx + math.cos(thetar) * dy
+
+        error_theta = math.atan2(dy, dx) - thetar
+        error_theta = normalize_angle(error_theta)
+
+        v = self.kp_x * error_x * math.cos(error_theta)
+        omega = self.kp_y * error_y + self.kp_theta * error_theta
+
+        return v, omega
+    
 class GlobalPlanner:
     """ Global Planner based on the example provided in Aula Global """
     
@@ -129,9 +156,7 @@ class GlobalPlanner:
     def load_data(self):
         indexes = pd.read_csv(self.heightfield_folder_path / 'indices.csv', index_col=False, dtype=np.float64, header=None)
         vertices = pd.read_csv(self.heightfield_folder_path / 'vertices.csv', index_col=False, dtype=np.float64, header=None)
-        
-        # EL ARREGLO MÁGICO: Aplanamos las matrices para no perder datos 
-        # y convertimos los índices a enteros puros de Python
+    
         self.indexes = indexes.to_numpy().flatten().astype(int).tolist()
         self.vertices = vertices.to_numpy().flatten().tolist()
         
@@ -187,6 +212,34 @@ class GlobalPlanner:
         path = nx.astar_path(self.graph, closest_to_start, closest_to_goal, heuristic=self.distance_cost)
         self.logger.log("Graph: Create path object")
         self.distance_path = self.create_path(self.graph, path)
+        
+    def generate_energy_path(self):
+        self.add_nodes(self.graph)
+        self.get_corners(self.graph)
+        # Add edges to the graph
+        for i in range(0, len(self.indexes), 3):
+            i1 = self.indexes[i]
+            i2 = self.indexes[i + 1]
+            i3 = self.indexes[i + 2]
+            self.graph.add_edge(i1, i2, weight=self.energy_cost(i1, i2))
+            self.graph.add_edge(i2, i1, weight=self.energy_cost(i2, i1))
+            self.graph.add_edge(i1, i3, weight=self.energy_cost(i1, i3))
+            self.graph.add_edge(i3, i1, weight=self.energy_cost(i3, i1))
+            self.graph.add_edge(i2, i3, weight=self.energy_cost(i2, i3))
+            self.graph.add_edge(i3, i2, weight=self.energy_cost(i3, i2))
+
+
+        self.logger.log(f"Graph nodes: {len(self.graph.nodes)}")
+        # Get closest node to start.
+        closest_to_start = self.get_closest_node(self.graph, self.get_start())
+
+        # Get closest node to goal.
+        closest_to_goal = self.get_closest_node(self.graph, self.get_goal())
+
+        self.logger.log("Graph: Path searching")
+        path = nx.dijkstra_path(self.graph, closest_to_start, closest_to_goal)
+        self.logger.log("Graph: Create path object")
+        self.energy_path = self.create_path(self.graph, path, extruded_shape=True)
 
     def create_path(self, graph, path, extruded_shape=False):
         points = []
@@ -268,7 +321,8 @@ class LocalPlanner:
                  mission_data: MissionData,
                  path_handle, 
                  local_planner_config:dict,
-                 robot_config:dict):
+                 robot_config:dict,
+                 mode: ControllerType):
         
         self.start_pos = mission_data.start
         self.goal_pos = mission_data.goal
@@ -276,12 +330,16 @@ class LocalPlanner:
         self.path_handle = path_handle
         self.local_planner_config = local_planner_config
         self.robot_config = robot_config
+        self.mode = mode
         
         # Get data from config
         self.threshold_distance = self.local_planner_config["lookahead_distance"]
         
         # Initialize controller
         self.robot_controller = AckermanController(max_linear_vel=robot_config["max_linear_vel"],max_angular_vel=robot_config["max_angular_vel"])
+        self.pose_pid_controller = PIDPoseController(kp_x=self.local_planner_config["pose_pid"]["kp_x"],
+                                                kp_y=self.local_planner_config["pose_pid"]["kp_y"], 
+                                                kp_theta=self.local_planner_config["pose_pid"]["kp_theta"])
         
         # Get handles for simulation items
         self.robot_handle = sim.getObject('/RobotnikSummitXL')
@@ -292,6 +350,7 @@ class LocalPlanner:
         self.double_table = sim.unpackDoubleTable(sim.readCustomDataBlock(path_handle,'PATH'))
         self.position_index = 0
         self.finished = False
+        self.executed_path = []
         
         # Move markers and robot to defined positions
         path_pos = self.get_position_on_path()
@@ -303,6 +362,16 @@ class LocalPlanner:
         goal_pos = [self.goal_pos[0], self.goal_pos[1], path_pos[2] +  + 0.5]  
         sim.setObjectPosition(self.goal_handle, -1, goal_pos)
         
+        # Robot trajectory path
+        self.traj_drawing = sim.addDrawingObject(
+            sim.drawing_linestrip,
+            3,          # thickness
+            0,
+            -1,
+            10000,
+            self.mode.color
+        )
+        
         
     def get_position_on_path(self):
         start_index = self.position_index * 7
@@ -312,7 +381,30 @@ class LocalPlanner:
         # self.logger.log(f'Start Index: {start_index}')
         # self.logger.log(f'End Index: {end_index}')
         return self.double_table[start_index:end_index]
-       
+    
+    def pure_pusuit_controller(self, error_distance: float, error_angle:float) -> tuple[float, float]:
+        linear_velocity =  self.local_planner_config["pure_pursuit"]["kp_linear"] * error_distance * math.cos(error_angle)
+        angular_velocity = self.local_planner_config["pure_pursuit"]["kp_angular"] * error_angle
+        return linear_velocity, angular_velocity
+        
+    def pid_pose_controller(self, path_pos) -> tuple[float, float]:
+        robot_pos = sim.getObjectPosition(self.robot_handle, -1)
+        robot_orient = sim.getObjectOrientation(self.robot_handle, -1)
+
+        robot_pose = (
+            robot_pos[0],
+            robot_pos[1],
+            robot_orient[2]
+        )
+
+        target_pose = (
+            path_pos[0],
+            path_pos[1]
+        )
+        
+        linear_velocity, angular_velocity = self.pose_pid_controller.compute(robot_pose, target_pose)
+        return linear_velocity, angular_velocity
+
     def run(self):
         path_pos = self.get_position_on_path()
         m = sim.getObjectMatrix(self.robot_handle, -1)
@@ -325,10 +417,6 @@ class LocalPlanner:
             + math.pow(path_pos[2], 2)
         )
         error_angle = normalize_angle(math.atan2(path_pos[1], path_pos[0])) 
-        
-        linear_velocity =  self.local_planner_config["kp_linear"] * error_distance * math.cos(error_angle)
-        angular_velocity = self.local_planner_config["kp_angular"] * error_angle
-        
         self.logger.log(f'Error: ({error_distance:.2f}, {math.degrees(error_angle):.2f})')
         
         # Goal reached condition
@@ -338,7 +426,16 @@ class LocalPlanner:
             self.finished = True
             self.logger.log("Goal reached!")
         else:
+            if self.mode == ControllerType.PURE_PURSUIT:
+                linear_velocity, angular_velocity = self.pure_pusuit_controller(error_distance, error_angle)
+            elif self.mode == ControllerType.POSE_PID:
+                world_target = self.get_position_on_path()
+                linear_velocity, angular_velocity = self.pid_pose_controller(world_target)
+            else:
+                raise ValueError(f"Unknown controller type: {self.mode}")
+                
             self.robot_controller.move(linear_velocity, angular_velocity)
+            self.record_robot_position()
 
         while error_distance < self.threshold_distance and self.position_index * 7 + 7 < len(self.double_table):
             self.position_index += 1
@@ -363,6 +460,33 @@ class LocalPlanner:
             if self.index < len(self.double_table) - 7:
                 self.index += 7
                 self.position_index += 1
+                
+    def record_robot_position(self):
+
+        pos = sim.getObjectPosition(self.robot_handle, -1)
+
+        # save
+        self.executed_path.append(pos)
+
+        # draw in CoppeliaSim
+        sim.addDrawingObjectItem(
+            self.traj_drawing,
+            [pos[0], pos[1], pos[2]]
+        )
+
+    def save_executed_path(self, folder="solutions"):
+        full_folder = os.path.join(folder, str(self.mode))
+        os.makedirs(full_folder, exist_ok=True)
+        filename = os.path.join(full_folder, "executed_path.csv")
+
+        df = pd.DataFrame(
+            self.executed_path,
+            columns=["x", "y", "z"]
+        )
+
+        df.to_csv(filename, index=False)
+
+        self.logger.log(f"Executed path saved to {filename}", to_print=True)
                  
 def main():
     main_logger = Logger()
@@ -377,10 +501,15 @@ def main():
     
     global_planner = GlobalPlanner(mission_data=mission_data, config=config_data["global_planner"])
     
-    global_planner.generate_distance_path()
+    if args.path_type == PathType.MIN_DISTANCE:
+        global_planner.generate_distance_path()
+    elif args.path_type == PathType.MIN_ENERGY:
+        global_planner.generate_energy_path()
+        
     path = global_planner.load_path()
     
     local_planner = LocalPlanner(
+        mode = args.controller,
         mission_data=mission_data,
         path_handle=path,
         local_planner_config=config_data["local_planner"],
@@ -394,10 +523,12 @@ def main():
         print("Goal reached. Stopping local planner")
             
     except KeyboardInterrupt:
-        print("Script stopped by user")
+        main_logger.log("Script stopped by user", to_print=True)
     
-    finally:
-        main_logger.log("Simulation finished", to_print=True)
+    local_planner.save_executed_path(
+        config_data["global_planner"]["executed_folder_path"]
+    )
+    main_logger.log("Simulation succesfully finished", to_print=True)
     
 if __name__ == "__main__":
     main()
