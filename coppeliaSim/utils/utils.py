@@ -1,5 +1,8 @@
 from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 from typing import Any, Tuple
+from pathlib import Path
+import yaml
+from dataclasses import dataclass
 
 class Logger:
     _instance = None 
@@ -36,3 +39,19 @@ def get_client() -> Any:
         return sim
     except Exception as e:
         raise Exception(f"Impossible to connect to CoppeliaSim: {e}")
+    
+def get_config(config_path: Path) -> dict:
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
+    
+@dataclass
+class MissionData:
+    start: list
+    goal: list
+    
+    
+def parse_config(config: dict) -> tuple["MissionData", dict]:
+    mission_dict = config.pop("mission")  
+    mission_data = MissionData(start=mission_dict["start_pos"],
+                               goal=mission_dict["goal_pos"])
+    return mission_data, config

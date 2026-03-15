@@ -1,5 +1,5 @@
 
-from coppeliaSim.utils.utils import get_client, Logger, init_logger 
+from coppeliaSim.utils.utils import get_client, Logger, init_logger, get_config, parse_config, MissionData
 from coppeliaSim.utils.math import distance_2d, distance_3d, normalize_angle
 from dataclasses import dataclass
 from enum import Enum
@@ -9,32 +9,20 @@ import pandas as pd
 from pathlib import Path
 import os
 import math
-import time
+import argparse
+import yaml
 
-START_POSITION = [29, 5]
 
-GOAL_POSITION = [59, 19]
-SIMULATION_DATA_FOLDER_PATH = Path('C:/Users/mario/OneDrive/Desktop/MASTER/SEGUNDO_CUATRI/ROBOTS_DE_CAMPO/TRABAJO/FieldRobots_RoboticMaster/simulation_data') 
-HEIGHTFIELD_FOLDER_PATH = SIMULATION_DATA_FOLDER_PATH / "heightfield"
-OUTPUT_FOLDER_PATH = SIMULATION_DATA_FOLDER_PATH / "solution_path"
+YAML_FILE = Path(__file__).parent.parent / "config.yaml"
 
-GRAVITY = 9.807
-SUBDIV = 800
-CONSTANT = 10
-Kp_LINEAR_VELOCITY = 0.5
-Kp_ANGULAR_VELOCITY = 0.3
-
-MAXIMUM_LINEAR_VELOCITY = 1.5
-MAXIMUM_ANGULAR_VELOCITY = 0.5
-
-LOOKAHEAD_DISTANCE = 1
 
 sim = get_client()
 init_logger(sim)
 
+
 @dataclass
 class RobotnikProperties:
-    radius = 0.235/2
+    wheel_radius = 0.235/2
     wheel_distance = 0.614
 
 class RobotWheels(Enum):
@@ -58,8 +46,16 @@ class AckermanController:
     """
     logger = Logger()
     
-    def __init__(self, radius=RobotnikProperties.radius, wheel_distance=RobotnikProperties.wheel_distance):
-        self.radius = radius
+    def __init__(self, 
+                 max_linear_vel,
+                 max_angular_vel,
+                 wheel_distance=RobotnikProperties.wheel_distance,
+                 wheel_radius=RobotnikProperties.wheel_radius):
+        
+        self.max_linear_vel = max_linear_vel
+        self.max_angular_vel = max_angular_vel
+        
+        self.radius = wheel_radius
         self.wheel_distance = wheel_distance
 
         # Get all wheel handles
@@ -74,8 +70,9 @@ class AckermanController:
             - linear_velocity in [m/s]
             - angular_velocity in [rad/s]
         """
-        linear_velocity = self.limit_velocity(linear_velocity, MAXIMUM_LINEAR_VELOCITY)
-        angular_velocity = self.limit_velocity(angular_velocity, MAXIMUM_ANGULAR_VELOCITY)
+        linear_velocity = self.limit_velocity(linear_velocity, self.max_linear_vel)
+        angular_velocity = self.limit_velocity(angular_velocity, self.max_angular_vel,
+)
         
         self.logger.log(f"Moving with twist: ({linear_velocity:.2f}, {angular_velocity:.2f})")
                 
@@ -110,18 +107,17 @@ class GlobalPlanner:
     
     logger = Logger()
     
-    def __init__(self, 
-                start_pos=START_POSITION,
-                goal_pos=GOAL_POSITION,
-                heightfield_folder_path=HEIGHTFIELD_FOLDER_PATH,
-                output_folder_path=OUTPUT_FOLDER_PATH,
-                subdiv=SUBDIV):
+    def __init__(self, mission_data: MissionData, config:dict):
         
-        self.start_position = start_pos
-        self.goal_position = goal_pos
-        self.heightfield_folder_path = heightfield_folder_path
-        self.output_folder_path = output_folder_path
-        self.subdiv = subdiv
+        self.config = config
+        
+        # Get data from config
+        self.start_position = mission_data.start
+        self.goal_position = mission_data.goal
+        
+        self.heightfield_folder_path = Path(self.config["heightfield_folder_path"])
+        self.solution_folder_path = Path(self.config["solution_folder_path"])
+        self.subdiv = self.config["subdiv"]
         
         self.graph = nx.Graph()
         self.upper_left_corner = None
@@ -130,8 +126,8 @@ class GlobalPlanner:
         self.logger.log("Loading data")
         self.load_data()
         
-        os.makedirs(self.output_folder_path, exist_ok=True)
-        self.logger.log(f"Output folder check passed: {self.output_folder_path}")
+        os.makedirs(self.solution_folder_path, exist_ok=True)
+        self.logger.log(f"Output folder check passed: {self.solution_folder_path}")
             
 
     def load_data(self):
@@ -222,7 +218,7 @@ class GlobalPlanner:
         return sim.createPath(points, 0, self.subdiv)
     
     def save_path(self, points: list, name: str = "solution_path"):
-        filename = self.output_folder_path / f"{name}.csv"
+        filename = self.solution_folder_path / f"{name}.csv"
         np_points = np.asarray(points)
         np.savetxt(filename, np_points, delimiter=',')
 
@@ -252,7 +248,7 @@ class GlobalPlanner:
     
     def load_path(self, name:str = "solution_path"):
         self.logger.log("Loading path")
-        filename = OUTPUT_FOLDER_PATH / f"{name}.csv"
+        filename = self.solution_folder_path / f"{name}.csv"
         points = np.genfromtxt(filename, delimiter=',')
         points = list(points)
         self.logger.log(len(points) / 7)
@@ -268,34 +264,48 @@ class GlobalPlanner:
         return sim.getMatrixInverse(self.heightfield_to_world)
 
 class LocalPlanner:
-    _DEFAULT_LOOKAHEAD_DISTANCE = 3
     _ROBOTNIK_HEIGTH = 0.416
     
     logger = Logger()
-    robot_controller = AckermanController()
-    
-    def __init__(self, path_handle, lookahead_distance=_DEFAULT_LOOKAHEAD_DISTANCE):
-        self.path_handle = path_handle
+
+    def __init__(self,                 
+                 mission_data: MissionData,
+                 path_handle, 
+                 local_planner_config:dict,
+                 robot_config:dict):
         
+        self.start_pos = mission_data.start
+        self.goal_pos = mission_data.goal
+        
+        self.path_handle = path_handle
+        self.local_planner_config = local_planner_config
+        self.robot_config = robot_config
+        
+        # Get data from config
+        self.threshold_distance = self.local_planner_config["lookahead_distance"]
+        
+        # Initialize controller
+        self.robot_controller = AckermanController(max_linear_vel=robot_config["max_linear_vel"],max_angular_vel=robot_config["max_angular_vel"])
+        
+        # Get handles for simulation items
         self.robot_handle = sim.getObject('/RobotnikSummitXL')
         self.start_handle = sim.getObject('/Start')
         self.goal_handle = sim.getObject('/Goal')
         
+        # Initialize auxiliar variables
         self.double_table = sim.unpackDoubleTable(sim.readCustomDataBlock(path_handle,'PATH'))
         self.position_index = 0
+        self.finished = False
         
         # Move markers and robot to defined positions
         path_pos = self.get_position_on_path()
-        start_pos = [START_POSITION[0], START_POSITION[1], path_pos[2] + 0.5]  
-        start_robot_pos = [START_POSITION[0], START_POSITION[1], path_pos[2]+self._ROBOTNIK_HEIGTH]  
+        start_pos = [self.start_pos[0], self.start_pos[1], path_pos[2] + 0.5]  
+        start_robot_pos = [self.start_pos[0], self.start_pos[1], path_pos[2]+self._ROBOTNIK_HEIGTH]  
         sim.setObjectPosition(self.robot_handle, -1, start_robot_pos)
         sim.setObjectPosition(self.start_handle, -1, start_pos)
 
-        goal_pos = [GOAL_POSITION[0], GOAL_POSITION[1], path_pos[2] +  + 0.5]  
+        goal_pos = [self.goal_pos[0], self.goal_pos[1], path_pos[2] +  + 0.5]  
         sim.setObjectPosition(self.goal_handle, -1, goal_pos)
-        
-        self.threshold_distance = lookahead_distance
-        self.finished = False
         
         
     def get_position_on_path(self):
@@ -320,8 +330,8 @@ class LocalPlanner:
         )
         error_angle = normalize_angle(math.atan2(path_pos[1], path_pos[0])) 
         
-        linear_velocity = Kp_LINEAR_VELOCITY * error_distance * math.cos(error_angle)
-        angular_velocity = Kp_ANGULAR_VELOCITY * error_angle
+        linear_velocity =  self.local_planner_config["kp_linear"] * error_distance * math.cos(error_angle)
+        angular_velocity = self.local_planner_config["kp_angular"] * error_angle
         
         self.logger.log(f'Error: ({error_distance:.2f}, {math.degrees(error_angle):.2f})')
         
@@ -365,13 +375,19 @@ def main():
     main_logger.log("=================  NEW EXECUTION ==================")
     main_logger.log("===================================================")
     
-    global_planner = GlobalPlanner()
+    config_data = get_config(YAML_FILE)
+    mission_data, config_data = parse_config(config_data)
+    
+    global_planner = GlobalPlanner(mission_data=mission_data, config=config_data["global_planner"])
+    
     global_planner.generate_distance_path()
     path = global_planner.load_path()
     
     local_planner = LocalPlanner(
-        path,
-        lookahead_distance=LOOKAHEAD_DISTANCE
+        mission_data=mission_data,
+        path_handle=path,
+        local_planner_config=config_data["local_planner"],
+        robot_config=config_data["robot"]
     )
     
     try:

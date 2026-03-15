@@ -1,0 +1,17 @@
+mission:  
+  start_pos: [29, 5]
+  goal_pos: [59, 19]
+
+global_planner:
+  heightfield_folder_path: 'C:/Users/mario/OneDrive/Desktop/MASTER/SEGUNDO_CUATRI/ROBOTS_DE_CAMPO/TRABAJO/FieldRobots_RoboticMaster/simulation_data/heightfield' 
+  solution_folder_path: 'C:/Users/mario/OneDrive/Desktop/MASTER/SEGUNDO_CUATRI/ROBOTS_DE_CAMPO/TRABAJO/FieldRobots_RoboticMaster/simulation_data/solution_path'
+  subdiv: 800
+
+local_planner:
+  kp_linear: 0.5
+  kp_angular: 0.3
+  lookahead_distance: 1
+
+robot:
+  max_linear_vel: 1.5
+  max_angular_vel: 0.5
