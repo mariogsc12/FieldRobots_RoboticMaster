@@ -8,7 +8,7 @@ global_planner:
   subdiv: 800
 
 local_planner:
-  lookahead_distance: 3
+  lookahead_distance: 1
 
   pure_pursuit:
     kp_linear: 0.5
