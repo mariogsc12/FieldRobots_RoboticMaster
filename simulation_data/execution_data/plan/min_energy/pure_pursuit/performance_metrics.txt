@@ -1,3 +1,0 @@
-Execution finished in: 1m 58.9s (118.91879s) with max memory usage of 123.40558 MB (0.36269%)
-Execution finished in: 1m 29.0s (89.00192s) with max memory usage of 123.40546 MB (0.36269%)
-Execution finished in: 1m 27.1s (87.08713s) with max memory usage of 123.40540 MB (0.36269%)
