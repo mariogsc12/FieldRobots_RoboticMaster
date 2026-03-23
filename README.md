@@ -3,6 +3,13 @@
 This repository contains a field robotics project developed for simulation and control of mobile robots in CoppeliaSim. The main goal is to test autonomous navigation, trajectory following, and data acquisition using Python and Lua scripts.
 
 ---
+## Usage
+```bash
+python -m coppeliaSim.control.main [--mode plan] [--path_type min_energy] [--controller pure_pursuit]
+```
+> Use --help to show all available options
+
+---
 
 ## Project Structure
 ```bash

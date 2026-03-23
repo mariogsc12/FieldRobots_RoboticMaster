@@ -70,8 +70,8 @@ class DifferentialController:
         
         self.logger.log(f"Moving with twist: ({linear_velocity:.2f}, {angular_velocity:.2f})")
                 
-        v_right = linear_velocity + self.wheel_distance * angular_velocity
-        v_left = linear_velocity - self.wheel_distance * angular_velocity
+        v_right = linear_velocity + (self.wheel_distance / 2) * angular_velocity
+        v_left  = linear_velocity - (self.wheel_distance / 2) * angular_velocity
 
         # Convert to wheel angular velocity
         omega_right = v_right / self.radius
@@ -85,7 +85,7 @@ class DifferentialController:
     
     def limit_velocity(self, command: float, maximum:float):
         if command > maximum or command < -maximum:
-            return maximum
+            return max(-maximum, min(maximum, command))
         else:
             return command
         
