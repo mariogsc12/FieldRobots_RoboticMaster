@@ -9,7 +9,7 @@ REPO_PATH = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
 
 # --- Rutas de Salida ---
 # Cambiamos el nombre de la salida para diferenciarla
-IMAGE_BASE_NAME = "plan_min_distance_comparison"
+IMAGE_BASE_NAME = "direct_comparison"
 PATH_IMAGE_NAME = f"{IMAGE_BASE_NAME}_path.png"
 TWIST_V_IMAGE_NAME = f"{IMAGE_BASE_NAME}_linear_velocity.png"
 TWIST_W_IMAGE_NAME = f"{IMAGE_BASE_NAME}_angular_velocity.png"
@@ -19,7 +19,7 @@ OUTPUT_PATH_TWIST_V = os.path.join(REPO_PATH, "documentation", "plots", "twist",
 OUTPUT_PATH_TWIST_W = os.path.join(REPO_PATH, "documentation", "plots", "twist", "output", TWIST_W_IMAGE_NAME)
 
 # --- Rutas de Entrada (Posición) ---
-BASE_INPUT_DIR = os.path.join(REPO_PATH, "simulation_data", "short_example", "execution_data", "plan", "min_distance")
+BASE_INPUT_DIR = os.path.join(REPO_PATH, "simulation_data", "short_example", "execution_data", "direct")
 
 INPUT_PATH1 = os.path.join(BASE_INPUT_DIR, "solution_path.csv")
 INPUT_PATH2 = os.path.join(BASE_INPUT_DIR, "pure_pursuit", "lookahead=1", "executed_path.csv")
@@ -56,7 +56,7 @@ def plot_xy_position():
                 return
 
     # 2. Configurar la figura (usamos una figura más cuadrada para mejor visualización 2D)
-    plt.figure(figsize=(10, 8))
+    plt.figure(figsize=(14, 6))
 
     # 3. Graficar Y(x)
     
@@ -155,5 +155,5 @@ def plot_twist_comparison():
 if __name__ == "__main__":
     # Descomenta las funciones que quieras ejecutar
     
-    # plot_xy_position()
-    plot_twist_comparison()
+    plot_xy_position()
+    # plot_twist_comparison()
