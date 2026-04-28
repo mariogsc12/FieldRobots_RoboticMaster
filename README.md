@@ -1,4 +1,4 @@
-# Field Robots - Robotic Master Project
+# AutonomousNavigation_CoppeliaSim - (Field Robotics -> Robotic Master Project)
 
 This repository contains a field robotics project developed for simulation and control of mobile robots in CoppeliaSim. The main goal is to test autonomous navigation, trajectory following, and data acquisition using Python and Lua scripts.
 
@@ -13,7 +13,7 @@ python -m coppeliaSim.control.main [--mode plan] [--path_type min_energy] [--con
 
 ## Project Structure
 ```bash
-FieldRobots_RoboticMaster/
+AutonomousNavigation_CoppeliaSim/
 │
 ├─ coppeliaSim/                     # CoppeliaSim simulation scripts and utilities
 │ ├─ control/                       # Main robot control scripts (Python)
